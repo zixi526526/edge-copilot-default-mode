@@ -1,5 +1,9 @@
 # Edge Copilot Smart Plus Auto-Switcher
 
+![presentation](https://github.com/user-attachments/assets/0793ed22-27c2-4dd0-ab7b-a2a4012b5355)
+
+
+
 [**English**](#english) | [**简体中文**](#简体中文)
 
 ---
