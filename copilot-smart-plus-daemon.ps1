@@ -1,3 +1,30 @@
+# 单实例保护
+$mutexName = "Global\CopilotSmartPlusDaemon"
+$pidFile = Join-Path $env:TEMP "CopilotSmartPlusDaemon.pid"
+$mutex = New-Object System.Threading.Mutex($false, $mutexName)
+
+if (-not $mutex.WaitOne(0)) {
+    Write-Host "[Smart Plus] 检测到已有实例在运行，正在接管..." -ForegroundColor Yellow
+    if (Test-Path $pidFile) {
+        $oldPid = (Get-Content $pidFile -ErrorAction SilentlyContinue).Trim()
+        if ($oldPid) {
+            # 先找到旧 PowerShell 的父进程（cmd.exe 窗口），一起杀掉
+            try {
+                $oldProc = Get-WmiObject Win32_Process -Filter "ProcessId=$oldPid" -ErrorAction SilentlyContinue
+                if ($oldProc -and $oldProc.ParentProcessId) {
+                    Stop-Process -Id $oldProc.ParentProcessId -Force -ErrorAction SilentlyContinue
+                }
+            } catch { }
+            Stop-Process -Id ([int]$oldPid) -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Start-Sleep -Milliseconds 500
+    try { $mutex.WaitOne() | Out-Null } catch [System.Threading.AbandonedMutexException] { }
+}
+
+$PID | Set-Content $pidFile -Force
+Write-Host "[Smart Plus] 单实例锁已获取 (PID: $PID)" -ForegroundColor Green
+
 $ErrorActionPreference = "SilentlyContinue"
 $DebugPort = 9222
 $SlowIntervalMs = 2000   # idle: 2s
@@ -107,47 +134,53 @@ Write-Host "[Smart Plus] Daemon started. Port: $DebugPort" -ForegroundColor Gree
 Write-Host "[Smart Plus] Adaptive polling: ${SlowIntervalMs}ms idle / ${FastIntervalMs}ms active" -ForegroundColor Green
 Write-Host ""
 
-while ($true) {
-    $targets = Get-CdpTargets
-    $needsFast = $false
+try {
+    while ($true) {
+        $targets = Get-CdpTargets
+        $needsFast = $false
 
-    if ($null -ne $targets) {
-        foreach ($target in $targets) {
-            $url = $target.url
-            $wsUrl = $target.webSocketDebuggerUrl
+        if ($null -ne $targets) {
+            foreach ($target in $targets) {
+                $url = $target.url
+                $wsUrl = $target.webSocketDebuggerUrl
 
-            if ($url -and $url.StartsWith("https://copilot.microsoft.com") -and $wsUrl) {
-                if (-not $injectedSet.ContainsKey($wsUrl)) {
-                    $needsFast = $true
-                    $ts = Get-Date -Format 'HH:mm:ss'
-                    Write-Host "[$ts] Found Copilot: $url" -ForegroundColor Cyan
-                    $ok = Invoke-CdpEvaluate -WsUrl $wsUrl -Code $EscapedCode
-                    if ($ok) {
-                        Write-Host "[$ts] Inject OK!" -ForegroundColor Green
-                        $injectedSet[$wsUrl] = $true
-                        $needsFast = $false
-                    }
-                    else {
-                        Write-Host "[$ts] Inject FAILED." -ForegroundColor Red
+                if ($url -and $url.StartsWith("https://copilot.microsoft.com") -and $wsUrl) {
+                    if (-not $injectedSet.ContainsKey($wsUrl)) {
+                        $needsFast = $true
+                        $ts = Get-Date -Format 'HH:mm:ss'
+                        Write-Host "[$ts] Found Copilot: $url" -ForegroundColor Cyan
+                        $ok = Invoke-CdpEvaluate -WsUrl $wsUrl -Code $EscapedCode
+                        if ($ok) {
+                            Write-Host "[$ts] Inject OK!" -ForegroundColor Green
+                            $injectedSet[$wsUrl] = $true
+                            $needsFast = $false
+                        }
+                        else {
+                            Write-Host "[$ts] Inject FAILED." -ForegroundColor Red
+                        }
                     }
                 }
             }
+
+            $currentWsUrls = $targets | Where-Object { $_.webSocketDebuggerUrl } | ForEach-Object { $_.webSocketDebuggerUrl }
+            $toRemove = @($injectedSet.Keys | Where-Object { $_ -notin $currentWsUrls })
+            foreach ($key in $toRemove) {
+                $injectedSet.Remove($key)
+                $needsFast = $true
+            }
         }
 
-        $currentWsUrls = $targets | Where-Object { $_.webSocketDebuggerUrl } | ForEach-Object { $_.webSocketDebuggerUrl }
-        $toRemove = @($injectedSet.Keys | Where-Object { $_ -notin $currentWsUrls })
-        foreach ($key in $toRemove) {
-            $injectedSet.Remove($key)
-            $needsFast = $true
+        if ($needsFast) {
+            $CurrentIntervalMs = $FastIntervalMs
         }
-    }
+        else {
+            $CurrentIntervalMs = $SlowIntervalMs
+        }
 
-    if ($needsFast) {
-        $CurrentIntervalMs = $FastIntervalMs
+        Start-Sleep -Milliseconds $CurrentIntervalMs
     }
-    else {
-        $CurrentIntervalMs = $SlowIntervalMs
-    }
-
-    Start-Sleep -Milliseconds $CurrentIntervalMs
+}
+finally {
+    $mutex.ReleaseMutex()
+    $mutex.Dispose()
 }

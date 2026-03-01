@@ -35,6 +35,6 @@ echo Make sure Edge is fully closed before first run.
 echo ============================================
 echo.
 
-powershell -ExecutionPolicy Bypass -File "%~dp0copilot-smart-plus-daemon.ps1"
+powershell -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; & ([scriptblock]::Create([System.IO.File]::ReadAllText('%~dp0copilot-smart-plus-daemon.ps1', [System.Text.Encoding]::UTF8)))"
 
 pause

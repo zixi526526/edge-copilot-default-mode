@@ -41,6 +41,6 @@ echo       首次使用请确认 Edge 已完全关闭后再运行此脚本.
 echo ============================================
 echo.
 
-powershell -ExecutionPolicy Bypass -File "%~dp0copilot-smart-plus-daemon.ps1"
+powershell -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; & ([scriptblock]::Create([System.IO.File]::ReadAllText('%~dp0copilot-smart-plus-daemon.ps1', [System.Text.Encoding]::UTF8)))"
 
 pause
